@@ -1,5 +1,7 @@
 import ToyReact, { Component } from './ToyReact';
 
+import './Square';
+
 class MyComponent extends Component{
   render() {
       return <div id="wrapper">
@@ -13,11 +15,13 @@ class MyComponent extends Component{
   }
 }
 
+class Test extends Component {}
+
 let myComponent = 
 <MyComponent class="className" id="idName">
-  <div id="text">123</div>
+  <Test id="text">123</Test>
 </MyComponent>;
-debugger
+
 ToyReact.render(
   myComponent,
   document.body

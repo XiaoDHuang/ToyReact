@@ -3,13 +3,46 @@ class ElementWrapper {
     this.root = document.createElement(tagName)
   }
   setAttribute(name, value) {
+    if (name.match(/on([\s\S]+)$/)) {
+      let type = RegExp.$1.toLocaleLowerCase();
+      this.root.addEventListener(type, value);
+      return;
+    }
+
+    if (name === 'className') {
+      name = 'class';
+    }
+
     this.root.setAttribute(name, value);
   }
   appendChild(vchild) {
-    vchild.mountTo(this.root)
+    let range = document.createRange();
+
+    if (this.root.children.length) {
+      range.setStartAfter(this.root.lastChild);
+      range.setEndAfter(this.root.lastChild);
+    } else {
+      range.setStart(this.root, 0);
+      range.setEnd(this.root, 0)
+    }
+
+    vchild.mountTo(range);
   }
-  mountTo(parent) {
-    parent.appendChild(this.root)
+  mountTo(range) {
+    this.range = range;
+    this.update();
+  }
+  update() {
+    let placeholder = document.createComment('placeholder');
+    let range = document.createRange();
+    range.setStart(this.range.endContainer, this.range.endOffset);
+    range.setEnd(this.range.endContainer, this.range.endOffset);
+    range.insertNode(placeholder);
+
+    this.range.deleteContents();
+    this.range.insertNode(this.root);
+
+    // placeholder.parentNode.removeChild(placeholder);
   }
 }
 
@@ -17,30 +50,55 @@ class TextWrapper {
   constructor(content) {
     this.root = document.createTextNode(content);
   }
-  mountTo(parent) {
-    parent.appendChild(this.root);
+  mountTo(range) {
+    range.deleteContents();
+    range.insertNode(this.root)
   }
 }
 
 export class Component {
-  constructor() {
-    this.prop = Object.create(null);
+  constructor(props) {
+    this.props = Object.create(null);
     this.children = [];
   }
+  setState(state) {
+    let merge = (oldVal, newVal) => {
+      for(let p in newVal) {
+        if (typeof newVal[p] === 'object') {
+          if (typeof oldVal[p] !== 'object') {
+            oldVal[p] = {}
+          }
+          merge(oldVal[p], newVal[p])
+        } else {
+          oldVal[p] = newVal[p]
+        }
+      }
+    }
+    if (!this.state && state)
+      this.state = {}; 
+    
+    merge(this.state, state);
+    this.update()
+  }
   setAttribute(name, value) {
-    this.prop[name] = value;
+    this.props[name] = value;
   }
   appendChild(vchild) {
     this.children.push(vchild)
   }
   render() {
-    return ToyReact.CreateElement('div', this.prop, ...this.children);
+    return ToyReact.CreateElement('div', this.props, ...this.children);
   }
-  mountTo(parent) {
+  mountTo(range) {
+    this.range = range;
+    this.update();
+  }
+  update() {
     let vdom = this.render();
-    vdom.mountTo(parent);
+    vdom.mountTo(this.range);
   }
 }
+
 export let ToyReact = {
   CreateElement(type, attributes, ...children) {
     let element 
@@ -67,6 +125,7 @@ export let ToyReact = {
           !(child instanceof TextWrapper)
         ) {
           child = String(child);
+          child = new TextWrapper(child);
         }
 
         if(element.appendChild) {
@@ -78,8 +137,18 @@ export let ToyReact = {
     insertChildren(children);
     return element;
   },
-  render(vdom, parent) {
-    vdom.mountTo(parent);
+  render(vdom, element) {
+    let range = document.createRange();
+
+    if (element.children.length) {
+      range.setStartAfter(element.lastChild);
+      range.setEndAfter(element.lastChild);
+    } else {
+      range.setStart(element, 0);
+      range.setEnd(element, 0)
+    }
+
+    vdom.mountTo(range);
   },
   Component,
 }
