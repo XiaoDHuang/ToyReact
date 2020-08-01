@@ -1,11 +1,23 @@
+const childrenSyml = Symbol('#children');
 class ElementWrapper {
   constructor(tagName) {
-    this.root = document.createElement(tagName)
+    this.type = tagName;
+    this.props = Object.create(null);
+    this[childrenSyml]= [];
+  }
+  get vdom() {
+    return this;
+  }
+  get children() {
+    return this[childrenSyml].map(child => child);
   }
   setAttribute(name, value) {
+    this.props[name] = value;
+  }
+  setElementAttribute(element, name, value) {
     if (name.match(/on([\s\S]+)$/)) {
       let type = RegExp.$1.toLocaleLowerCase();
-      this.root.addEventListener(type, value);
+      element.addEventListener(type, value);
       return;
     }
 
@@ -13,26 +25,36 @@ class ElementWrapper {
       name = 'class';
     }
 
-    this.root.setAttribute(name, value);
+    element.setAttribute(name, value);
   }
   appendChild(vchild) {
-    let range = document.createRange();
-
-    if (this.root.children.length) {
-      range.setStartAfter(this.root.lastChild);
-      range.setEndAfter(this.root.lastChild);
-    } else {
-      range.setStart(this.root, 0);
-      range.setEnd(this.root, 0)
-    }
-
-    vchild.mountTo(range);
+    this[childrenSyml].push(vchild);
   }
   mountTo(range) {
-    this.range = range;
-    this.update();
+    this.range = range; 
+    this.update(range);
   }
   update() {
+    let element = document.createElement(this.type)
+    this.root = element;
+
+    for(let name in this.props) {
+      this.setElementAttribute(element, name, this.props[name])
+    }
+
+    for(let vchild of this[childrenSyml]) {
+      let childRange = document.createRange();
+      if (element.children.length) {
+        childRange.setStartAfter(element.lastChild);
+        childRange.setEndAfter(element.lastChild);
+      } else {
+        childRange.setStart(element, 0);
+        childRange.setEnd(element, 0)
+      }
+
+      vchild.mountTo(childRange);
+    }
+    
     let placeholder = document.createComment('placeholder');
     let range = document.createRange();
     range.setStart(this.range.endContainer, this.range.endOffset);
@@ -41,14 +63,22 @@ class ElementWrapper {
 
     this.range.deleteContents();
     this.range.insertNode(this.root);
-
     // placeholder.parentNode.removeChild(placeholder);
   }
 }
 
 class TextWrapper {
   constructor(content) {
+    this.type = '#text';
+    this.props = Object.create(null);
+    this[childrenSyml] = [];
     this.root = document.createTextNode(content);
+  }
+  get children() {
+    return this[childrenSyml].map(child => child);
+  }
+  get vdom() {
+    return this;
   }
   mountTo(range) {
     range.deleteContents();
@@ -59,13 +89,28 @@ class TextWrapper {
 export class Component {
   constructor(props) {
     this.props = Object.create(null);
-    this.children = [];
+    this[childrenSyml] = [];
+  }
+  get vdom() {
+    if (this.oldVdom) {
+      return this.oldVdom;
+    } else {
+      return this.render().vdom;
+    }
+  } 
+  get type() {
+    return this.constructor.name;
+  }
+  get children() {
+    return this[childrenSyml].map(child => child);
   }
   setState(state) {
     let merge = (oldVal, newVal) => {
       for(let p in newVal) {
-        if (typeof newVal[p] === 'object') {
-          if (typeof oldVal[p] !== 'object') {
+        if (typeof newVal[p] === 'object' && newVal[p] !== null) {
+          if (newVal[p] instanceof Array) {
+            oldVal[p] = [];
+          } else {
             oldVal[p] = {}
           }
           merge(oldVal[p], newVal[p])
@@ -84,7 +129,7 @@ export class Component {
     this.props[name] = value;
   }
   appendChild(vchild) {
-    this.children.push(vchild)
+    this[childrenSyml].push(vchild)
   }
   render() {
     return ToyReact.CreateElement('div', this.props, ...this.children);
@@ -95,7 +140,74 @@ export class Component {
   }
   update() {
     let vdom = this.render();
-    vdom.mountTo(this.range);
+
+    let isSameNode= (oldNode, newNode) => {
+      if (oldNode.type !== newNode.type) {
+        return false;
+      }
+      if (Object.keys(oldNode.props).length !== Object.keys(newNode.props).length) {
+        return false;
+      }
+      for(let name in oldNode.props) {
+        if (
+          typeof oldNode.props[name] === 'function' &&
+          typeof newNode.props[name] === 'function' &&
+          oldNode.props[name].toString() === newNode.props[name].toString()
+        ) 
+        {
+          continue;
+        }
+
+        if (oldNode.props[name] != newNode.props[name]) {
+          return false;
+        }
+      }
+
+      if (oldNode.children.length !== newNode.children.length) {
+        return false;
+      }
+
+      return true;
+    }
+
+    let isSameTree = (oldNode, newNode) => {
+      if (!isSameNode(oldNode, newNode)) {
+        return false;
+      } 
+
+      if (oldNode.children.length !== newNode.children.length) {
+        return false;
+      }
+
+      for(let i = 0; i < oldNode.children.length; i ++) {
+        if (!isSameTree(oldNode.children[i], newNode.children[i])) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+
+    let replace = (oldNode, newNode) => {
+      if (isSameTree(oldNode, newNode)) {
+        return;
+      }
+
+      if (!isSameNode(oldNode, newNode)) {
+        newNode.mountTo(oldNode.range);
+      } else {
+        for(let i = 0; i < oldNode.children.length; i ++) {
+          replace(oldNode.children[i].vdom, newNode.children[i].vdom);
+        } 
+      }
+    }
+
+    if (this.oldVdom) {
+      replace(this.oldVdom, vdom)
+    } else {
+      vdom.mountTo(this.range);
+      this.oldVdom = vdom;
+    }
   }
 }
 
@@ -124,6 +236,10 @@ export let ToyReact = {
           !(child instanceof ElementWrapper) &&
           !(child instanceof TextWrapper)
         ) {
+          if (child === null || child === void 0) {
+            child = '';
+          }
+
           child = String(child);
           child = new TextWrapper(child);
         }
